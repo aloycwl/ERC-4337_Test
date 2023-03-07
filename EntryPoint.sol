@@ -1,11 +1,6 @@
 pragma solidity>0.8.0;//SPDX-License-Identifier:None
 
-import"IAccount.sol";
-import"IPaymaster.sol";
-import"IEntryPoint.sol";
-import"Exec.sol";
-import"StakeManager.sol";
-import"SenderCreator.sol";
+import"Interfaces.sol";
 import"Helpers.sol";
 
 contract EntryPoint is IEntryPoint,StakeManager{
