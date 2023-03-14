@@ -49,7 +49,7 @@ interface IStakeManager {
     event StakeLocked(address,uint,uint);
     event StakeUnlocked(address,uint);
     event StakeWithdrawn(address,address,uint);
-    struct DepositInfo{uint112 deposit;bool staked;uint112 stake;uint32 unstakeDelaySec;uint48 withdrawTime;}
+    struct DepositInfo{uint deposit;bool staked;uint stake;uint32 unstakeDelaySec;uint48 withdrawTime;}
     struct StakeInfo {uint stake;uint unstakeDelaySec;}
     function getDepositInfo(address)external view returns(DepositInfo memory);
     function balanceOf(address)external view returns(uint);

@@ -15,7 +15,6 @@ contract EntryPoint is IEntryPoint,StakeManager{
     struct UserOpInfo{MemoryUserOp mUserOp;bytes32 userOpHash;uint prefund;uint contextOffset;uint preOpGas;}
     
     function _compensate(address payable beneficiary,uint amount)internal{
-        //require(beneficiary!=address(0));
         (bool success,)=beneficiary.call{value:amount}("");
         require(success);
     }
@@ -36,9 +35,8 @@ contract EntryPoint is IEntryPoint,StakeManager{
     function handleOps(UserOperation[]calldata ops,address payable beneficiary)public{unchecked{
         uint opslen=ops.length;
         UserOpInfo[]memory opInfos=new UserOpInfo[](opslen);
-        for (uint i=0;i<opslen;i++){
-            UserOpInfo memory opInfo=opInfos[i];
-            (uint validationData,uint pmValidationData)=_validatePrepayment(i,ops[i],opInfo);
+        for(uint i=0;i<opslen;i++){
+            (uint validationData,uint pmValidationData)=_validatePrepayment(i,ops[i],opInfos[i]);
             _validateAccountAndPaymasterValidationData(i,validationData,pmValidationData,address(0));
         }
         uint collected=0;
@@ -47,7 +45,7 @@ contract EntryPoint is IEntryPoint,StakeManager{
     }}
     function handleAggregatedOps(UserOpsPerAggregator[]calldata opsPerAggregator,address payable beneficiary)public{
         (uint opasLen,uint totalOps)=(opsPerAggregator.length,0);
-        for (uint i=0;i<opasLen;i++){
+        for(uint i=0;i<opasLen;i++){
             UserOpsPerAggregator calldata opa=opsPerAggregator[i];
             UserOperation[]calldata ops=opa.userOps;
             IAggregator aggregator=opa.aggregator;
@@ -61,12 +59,11 @@ contract EntryPoint is IEntryPoint,StakeManager{
         }
         UserOpInfo[]memory opInfos=new UserOpInfo[](totalOps);
         uint opIndex=0;
-        for (uint a=0;a<opasLen;a++){
+        for(uint a=0;a<opasLen;a++){
             UserOpsPerAggregator calldata opa=opsPerAggregator[a];
             UserOperation[]calldata ops=opa.userOps;
             IAggregator aggregator=opa.aggregator;
-            uint opslen=ops.length;
-            for (uint i=0;i<opslen;i++){
+            for(uint i=0;i<ops.length;i++){
                 UserOpInfo memory opInfo=opInfos[opIndex];
                 (uint validationData,uint paymasterValidationData)=_validatePrepayment(opIndex,ops[i],opInfo);
                 _validateAccountAndPaymasterValidationData(i,validationData,paymasterValidationData,address(aggregator));
@@ -75,15 +72,9 @@ contract EntryPoint is IEntryPoint,StakeManager{
         }
         uint collected=0;
         opIndex=0;
-        for (uint a=0;a<opasLen;a++){
-            UserOpsPerAggregator calldata opa=opsPerAggregator[a];
-            emit SignatureAggregatorChanged(address(opa.aggregator));
-            UserOperation[]calldata ops=opa.userOps;
-            uint opslen=ops.length;
-            for (uint i=0;i<opslen;i++){
-                collected+=_executeUserOp(opIndex,ops[i],opInfos[opIndex]);
-                opIndex++;
-            }
+        for(uint a=0;a<opasLen;a++){
+            UserOperation[]calldata ops=opsPerAggregator[a].userOps;
+            for(uint i=0;i<ops.length;i++)(collected+=_executeUserOp(opIndex,ops[i],opInfos[opIndex]),opIndex++);
         }
         _compensate(beneficiary,collected);
     }
@@ -93,24 +84,22 @@ contract EntryPoint is IEntryPoint,StakeManager{
         (uint validationData,uint paymasterValidationData)=_validatePrepayment(0,op,opInfo);
         ValidationData memory data=_intersectTimeRange(validationData,paymasterValidationData);
         numberMarker();
-        uint paid=_executeUserOp(0,op,opInfo);
         numberMarker();
         bool targetSuccess;
         bytes memory targetResult;
         if(target!=address(0))(targetSuccess,targetResult)=target.call(targetCallData);
-        revert ExecutionResult(opInfo.preOpGas,paid,data.validAfter,data.validUntil,targetSuccess,targetResult);
+        revert ExecutionResult(opInfo.preOpGas,_executeUserOp(0,op,opInfo),data.validAfter,
+            data.validUntil,targetSuccess,targetResult);
     }
-    function innerHandleOp(bytes memory callData,UserOpInfo memory opInfo,bytes calldata context)external returns(uint actualGasCost){
+    function innerHandleOp(bytes memory callData,UserOpInfo memory opInfo,bytes calldata context)external
+    returns(uint actualGasCost){unchecked{
         uint preGas=gasleft();
-        //require(msg.sender==address(this));
         MemoryUserOp memory mUserOp=opInfo.mUserOp;
         uint callGasLimit=mUserOp.callGasLimit;
-        unchecked{
-            if(gasleft()<callGasLimit+mUserOp.verificationGasLimit+5000){
-                assembly{
-                    mstore(0,INNER_OUT_OF_GAS)
-                    revert(0,32)
-                }
+        if(gasleft()<callGasLimit+mUserOp.verificationGasLimit+5000){
+            assembly{
+                mstore(0,INNER_OUT_OF_GAS)
+                revert(0,32)
             }
         }
         IPaymaster.PostOpMode mode=IPaymaster.PostOpMode.opSucceeded;
@@ -118,11 +107,8 @@ contract EntryPoint is IEntryPoint,StakeManager{
             bool success=Exec.call(mUserOp.sender,0,callData,callGasLimit);
             if(!success)mode=IPaymaster.PostOpMode.opReverted;
         }
-        unchecked{
-            uint actualGas=preGas-gasleft()+opInfo.preOpGas;
-            return _handlePostOp(0,mode,opInfo,context,actualGas);
-        }
-    }
+        return _handlePostOp(0,mode,opInfo,context,preGas-gasleft()+opInfo.preOpGas);
+    }}
     function getUserOpHash(UserOperation calldata userOp)public view returns(bytes32){
         return keccak256(abi.encode(userOp.hash(),address(this),block.chainid));
     }
@@ -147,19 +133,18 @@ contract EntryPoint is IEntryPoint,StakeManager{
         factoryInfo=_getStakeInfo(factory);
         ValidationData memory data=_intersectTimeRange(validationData,paymasterValidationData);
         address aggregator=data.aggregator;
-        bool sigFailed=aggregator==address(1);
         ReturnInfo memory returnInfo=ReturnInfo(outOpInfo.preOpGas,outOpInfo.prefund,
-            sigFailed,data.validAfter,data.validUntil,getMemoryBytesFromOffset(outOpInfo.contextOffset));
+            aggregator==address(1),data.validAfter,data.validUntil,getMemoryBytesFromOffset(outOpInfo.contextOffset));
         if(aggregator!=address(0)&& aggregator!=address(1)){
             AggregatorStakeInfo memory aggregatorInfo=AggregatorStakeInfo(aggregator,_getStakeInfo(aggregator));
             revert ValidationResultWithAggregation(returnInfo,senderInfo,factoryInfo,paymasterInfo,aggregatorInfo);
         }
         revert ValidationResult(returnInfo,senderInfo,factoryInfo,paymasterInfo);
     }
-    function _getRequiredPrefund(MemoryUserOp memory mUserOp)internal pure returns(uint requiredPrefund){unchecked{
-        uint mul=mUserOp.paymaster!=address(0)?3:1;
-        uint requiredGas=mUserOp.callGasLimit+mUserOp.verificationGasLimit*mul+mUserOp.preVerificationGas;
-        requiredPrefund=requiredGas*mUserOp.maxFeePerGas;
+    function _getRequiredPrefund(MemoryUserOp memory mUserOp)internal pure returns(uint){unchecked{
+        uint requiredGas=mUserOp.callGasLimit+mUserOp.verificationGasLimit*(mUserOp.paymaster!=address(0)?3:1)
+            +mUserOp.preVerificationGas;
+        return requiredGas*mUserOp.maxFeePerGas;
     }}
     function _createSenderIfNeeded(uint opIndex,UserOpInfo memory opInfo,bytes calldata initCode)internal{
         if(initCode.length!=0){
@@ -195,34 +180,24 @@ contract EntryPoint is IEntryPoint,StakeManager{
         try IAccount(sender).validateUserOp{gas:mUserOp.verificationGasLimit}(op,opInfo.userOpHash,missingAccountFunds)
         returns(uint _validationData){
             validationData=_validationData;
-        }catch Error(string memory){
-            revert FailedOp(opIndex,"");
         }catch{
             revert FailedOp(opIndex,"");
         }
         if(paymaster==address(0)){
-            DepositInfo storage senderInfo=deposits[sender];
-            uint deposit=senderInfo.deposit;
-            if(requiredPrefund>deposit)revert FailedOp(opIndex,"");
-            senderInfo.deposit=uint112(deposit-requiredPrefund);
+            if(requiredPrefund>deposits[sender].deposit)revert FailedOp(opIndex,"");
+            deposits[sender].deposit=deposits[sender].deposit-requiredPrefund;
         }
         gasUsedByValidateAccountPrepayment=preGas-gasleft();
     }}
     function _validatePaymasterPrepayment(uint opIndex,UserOperation calldata op,UserOpInfo memory opInfo,uint requiredPreFund,
     uint gasUsedByValidateAccountPrepayment)internal returns(bytes memory context,uint validationData){unchecked{
-        MemoryUserOp memory mUserOp=opInfo.mUserOp;
-        uint verificationGasLimit=mUserOp.verificationGasLimit;
-        //require(verificationGasLimit>gasUsedByValidateAccountPrepayment);
-        (uint gas,address paymaster)=(verificationGasLimit-gasUsedByValidateAccountPrepayment,mUserOp.paymaster);
-        DepositInfo storage paymasterInfo=deposits[paymaster];
-        uint deposit=paymasterInfo.deposit;
+        (uint gas,address paymaster)=(opInfo.mUserOp.verificationGasLimit-gasUsedByValidateAccountPrepayment,opInfo.mUserOp.paymaster);
+        uint deposit=deposits[paymaster].deposit;
         if(deposit<requiredPreFund)revert FailedOp(opIndex,"");
-        paymasterInfo.deposit=uint112(deposit-requiredPreFund);
+        deposits[paymaster].deposit=deposit-requiredPreFund;
         try IPaymaster(paymaster).validatePaymasterUserOp{gas:gas}(op,opInfo.userOpHash,requiredPreFund)returns
         (bytes memory _context,uint _validationData){
             (context,validationData)=(_context,_validationData);
-        }catch Error(string memory){
-            revert FailedOp(opIndex,"");
         }catch{
             revert FailedOp(opIndex,"");
         }
@@ -244,13 +219,11 @@ contract EntryPoint is IEntryPoint,StakeManager{
         aggregator=data.aggregator;
     }
     function _validatePrepayment(uint opIndex,UserOperation calldata userOp,UserOpInfo memory outOpInfo)
-    private returns(uint validationData,uint paymasterValidationData){
+    private returns(uint validationData,uint paymasterValidationData){unchecked{
         (uint preGas,MemoryUserOp memory mUserOp)=(gasleft(),outOpInfo.mUserOp);
         _copyUserOpToMemory(userOp,mUserOp);
         outOpInfo.userOpHash=getUserOpHash(userOp);
-        //uint maxGasValues=mUserOp.preVerificationGas|mUserOp.verificationGasLimit|mUserOp.callGasLimit|
         userOp.maxFeePerGas|userOp.maxPriorityFeePerGas;
-        //require(maxGasValues<=type(uint120).max);
         uint gasUsedByValidateAccountPrepayment;
         uint requiredPreFund=_getRequiredPrefund(mUserOp);
         (gasUsedByValidateAccountPrepayment,validationData)=_validateAccountPrepayment(opIndex,userOp,outOpInfo,requiredPreFund);
@@ -258,13 +231,10 @@ contract EntryPoint is IEntryPoint,StakeManager{
         bytes memory context;
         if(mUserOp.paymaster!=address(0))(context,paymasterValidationData)=
             _validatePaymasterPrepayment(opIndex,userOp,outOpInfo,requiredPreFund,gasUsedByValidateAccountPrepayment);
-        unchecked{
-            uint gasUsed=preGas-gasleft();
-            if(userOp.verificationGasLimit<gasUsed)revert FailedOp(opIndex,"");
-            (outOpInfo.prefund,outOpInfo.contextOffset,outOpInfo.preOpGas)=
-                (requiredPreFund,getOffsetOfMemoryBytes(context),preGas-gasleft()+userOp.preVerificationGas);
-        }
-    }
+        if(userOp.verificationGasLimit<preGas-gasleft())revert FailedOp(opIndex,"");
+        (outOpInfo.prefund,outOpInfo.contextOffset,outOpInfo.preOpGas)=
+            (requiredPreFund,getOffsetOfMemoryBytes(context),preGas-gasleft()+userOp.preVerificationGas);
+    }}
     function _handlePostOp(uint opIndex,IPaymaster.PostOpMode mode,UserOpInfo memory opInfo,bytes memory context,uint actualGas)
     private returns(uint actualGasCost){unchecked{
         (uint preGas,MemoryUserOp memory mUserOp)=(gasleft(),opInfo.mUserOp);
@@ -274,7 +244,7 @@ contract EntryPoint is IEntryPoint,StakeManager{
         else{
             refundAddress=paymaster;
             if(context.length>0){
-                actualGasCost=actualGas*gasPrice;
+                actualGasCost*=gasPrice;
                 if(mode!=IPaymaster.PostOpMode.postOpReverted)
                     IPaymaster(paymaster).postOp{gas:mUserOp.verificationGasLimit}(mode,context,actualGasCost);
                 else
@@ -284,8 +254,7 @@ contract EntryPoint is IEntryPoint,StakeManager{
                     }
             }
         }
-        actualGas+=preGas-gasleft();
-        actualGasCost=actualGas*gasPrice;
+        actualGasCost=actualGas+preGas-gasleft()*gasPrice;
         if(opInfo.prefund<actualGasCost)revert FailedOp(opIndex,"");
         _incrementDeposit(refundAddress,opInfo.prefund-actualGasCost);
     }}
