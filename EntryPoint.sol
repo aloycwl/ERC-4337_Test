@@ -25,14 +25,13 @@ library UserOperationLib {
             calldatacopy(add(ret,32),ofs,len)
         }
     }
-    function hash(UserOperation calldata userOp)internal pure returns(bytes32) {
+    function hash(UserOperation calldata userOp)internal pure returns(bytes32){
         return keccak256(pack(userOp));
     }
     function min(uint a,uint b)internal pure returns(uint){
         return a<b?a:b;
     }
 }
-
 interface IPaymaster{
     enum PostOpMode{opSucceeded,opReverted,postOpReverted}
     function validatePaymasterUserOp(UserOperation calldata,bytes32,uint)
@@ -57,7 +56,7 @@ interface IStakeManager {
     function addStake(uint32)external payable;
     function unlockStake()external;
     function withdrawStake(address payable)external;
-    function withdrawTo(address payable,uint) external;
+    function withdrawTo(address payable,uint)external;
 }
 interface IEntryPoint is IStakeManager{
     event UserOperationEvent(bytes32 ,address ,address,uint,bool,uint,uint);
@@ -102,7 +101,7 @@ library Exec{
             success:=delegatecall(txGas,to,add(data,0x20),mload(data),0,0)
         }
     }
-    function getReturnData(uint maxLen) internal pure returns(bytes memory returnData){
+    function getReturnData(uint maxLen)internal pure returns(bytes memory returnData){
         assembly{
             let len:=returndatasize()
             if gt(len,maxLen){
@@ -134,15 +133,15 @@ function _parseValidationData(uint validationData)pure returns(ValidationData me
     if (validUntil==0)validUntil=type(uint48).max;
     return ValidationData(address(uint160(validationData)),uint48(validationData>>208),validUntil);
 }
-function _intersectTimeRange(uint256 validationData, uint256 paymasterValidationData) pure returns (ValidationData memory){
+function _intersectTimeRange(uint256 validationData, uint256 paymasterValidationData)pure returns(ValidationData memory){
     (ValidationData memory accountValidationData,ValidationData memory pmValidationData)=
     (_parseValidationData(validationData),_parseValidationData(paymasterValidationData));
     address aggregator=accountValidationData.aggregator;
     if(aggregator==address(0))aggregator=pmValidationData.aggregator;
     (uint48 validAfter,uint48 validUntil,uint48 pmValidAfter,uint48 pmValidUntil)=
     (accountValidationData.validAfter,accountValidationData.validUntil,pmValidationData.validAfter,pmValidationData.validUntil);
-    if(validAfter < pmValidAfter)validAfter=pmValidAfter;
-    if(validUntil > pmValidUntil)validUntil=pmValidUntil;
+    if(validAfter<pmValidAfter)validAfter=pmValidAfter;
+    if(validUntil>pmValidUntil)validUntil=pmValidUntil;
     return ValidationData(aggregator,validAfter,validUntil);
 }
 function _packValidationData(ValidationData memory data)pure returns(uint256){
@@ -169,14 +168,13 @@ abstract contract StakeManager is IStakeManager{
     function getDepositInfo(address account)public view returns(DepositInfo memory){
         return deposits[account];
     }
-    function _getStakeInfo(address addr)internal view returns(StakeInfo memory info) {
-        DepositInfo storage depositInfo=deposits[addr];
-        (info.stake,info.unstakeDelaySec)=(depositInfo.stake,depositInfo.unstakeDelaySec);
+    function _getStakeInfo(address addr)internal view returns(StakeInfo memory info){
+        (info.stake,info.unstakeDelaySec)=(deposits[addr].stake,deposits[addr].unstakeDelaySec);
     }
     function balanceOf(address account)public view returns(uint){
         return deposits[account].deposit;
     }
-    receive() external payable{
+    receive()external payable{
         depositTo(msg.sender);
     }
     function _incrementDeposit(address account,uint amount)internal{
@@ -194,7 +192,7 @@ abstract contract StakeManager is IStakeManager{
     }
     function withdrawStake(address payable withdrawAddress)external{
         DepositInfo storage info=deposits[msg.sender];
-        (info.unstakeDelaySec,info.withdrawTime,info.stake)=(0,0,0);
+        (info.unstakeDelaySec,deposits[msg.sender].withdrawTime,info.stake)=(0,0,0);
         (bool success,)=withdrawAddress.call{value:info.stake}("");
         require(success);
     }
